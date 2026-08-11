@@ -1,14 +1,17 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { generateQrDataUrl } from "@/lib/qr";
 import { getSiteOrigin } from "@/lib/url";
 import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import {
   PROMOTIONAL_PERMISSION_LABEL,
   RECORDING_CONSENT_LABEL,
   PRIVATE_ACCESS_LABEL,
 } from "@/lib/consent";
 import type { CheckIn, ConsentRecord } from "@/lib/database.types";
+import { createPerformanceFromCheckIn } from "../../performances/actions";
 
 interface ShowDetailRow {
   id: string;
@@ -49,6 +52,17 @@ export default async function AdminShowDetailPage({
     .select<"*, consent_records ( * )", CheckInWithConsentRow>("*, consent_records ( * )")
     .eq("show_id", showId)
     .order("checked_in_at", { ascending: false });
+
+  const { data: performances } = await supabase
+    .from("performances")
+    .select("id, check_in_id")
+    .eq("show_id", showId);
+
+  const performanceIdByCheckIn = new Map(
+    (performances ?? [])
+      .filter((p): p is { id: string; check_in_id: string } => p.check_in_id !== null)
+      .map((p) => [p.check_in_id, p.id]),
+  );
 
   const origin = await getSiteOrigin();
   const checkInUrl = `${origin}/check-in?show=${showId}`;
@@ -137,6 +151,25 @@ export default async function AdminShowDetailPage({
                         </>
                       ) : (
                         <Badge tone="warn">No consent recorded</Badge>
+                      )}
+                    </div>
+
+                    <div className="mt-3">
+                      {performanceIdByCheckIn.has(checkIn.id) ? (
+                        <Link
+                          href={`/admin/performances/${performanceIdByCheckIn.get(checkIn.id)}`}
+                          className="text-sm text-marquee hover:text-marquee-muted"
+                        >
+                          View performance →
+                        </Link>
+                      ) : (
+                        <form action={createPerformanceFromCheckIn}>
+                          <input type="hidden" name="checkInId" value={checkIn.id} />
+                          <input type="hidden" name="showId" value={showId} />
+                          <Button type="submit" variant="secondary" className="w-auto px-4 py-2 text-sm">
+                            Create performance
+                          </Button>
+                        </form>
                       )}
                     </div>
                   </li>

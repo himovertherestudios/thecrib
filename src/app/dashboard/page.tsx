@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getCurrentUser, getComedianProfileForUser } from "@/lib/auth";
 import { getComedianPerformances } from "./queries";
 
@@ -29,15 +30,17 @@ export default async function DashboardPage() {
         ) : (
           <ul className="mt-3 flex flex-col gap-2">
             {performances.map((performance) => (
-              <li
-                key={performance.id}
-                className="rounded-xl2 border border-stage-700 bg-stage-850 px-4 py-3"
-              >
-                <p className="text-white">{performance.showTitle}</p>
-                <p className="text-sm text-stage-400">
-                  {performance.clubName} ·{" "}
-                  {performance.showDate ? new Date(performance.showDate).toLocaleDateString() : ""}
-                </p>
+              <li key={performance.id}>
+                <Link
+                  href={`/dashboard/sets/${performance.id}`}
+                  className="block rounded-xl2 border border-stage-700 bg-stage-850 px-4 py-3 hover:border-stage-500"
+                >
+                  <p className="text-white">{performance.showTitle}</p>
+                  <p className="text-sm text-stage-400">
+                    {performance.clubName} ·{" "}
+                    {performance.showDate ? new Date(performance.showDate).toLocaleDateString() : ""}
+                  </p>
+                </Link>
               </li>
             ))}
           </ul>
