@@ -11,17 +11,17 @@ import type {
  */
 export const CURRENT_CONSENT_VERSION = "v1";
 
+// Recording is no longer an opt-in/opt-out choice — every check-in is
+// informed that recording happens, and must acknowledge it to continue.
+// Still stores a real recording_consent value ("allowed") rather than
+// skipping the field, so there's an audit trail that they were shown this
+// notice and proceeded. `denied` remains a valid value in the schema for
+// any historical records from before this change.
 export const RECORDING_CONSENT_COPY = {
   heading: "Recording Permission",
   description:
-    "I understand that my performance may be recorded by the venue or its media partner for private playback, content creation, and services I request.",
-  options: [
-    { value: "allowed" as RecordingConsent, label: "I agree to have my performance recorded." },
-    {
-      value: "denied" as RecordingConsent,
-      label: "I do not agree to have my performance recorded.",
-    },
-  ],
+    "Your performance will be recorded by the venue or its media partner for private playback, content creation, and services you request.",
+  options: [{ value: "allowed" as RecordingConsent, label: "I understand." }],
 };
 
 export const PRIVATE_ACCESS_COPY = {

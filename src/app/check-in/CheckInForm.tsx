@@ -183,7 +183,7 @@ export function CheckInForm({ show }: { show: ShowSummary }) {
     setError(null);
 
     if (!recordingConsent) {
-      setError("Please choose a recording permission option.");
+      setError("Please acknowledge the recording notice.");
       return;
     }
     if (!privateContentAccess) {
