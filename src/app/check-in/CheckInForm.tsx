@@ -17,6 +17,20 @@ import type {
 import { submitCheckIn } from "./actions";
 import type { ShowSummary } from "./queries";
 
+/**
+ * Supabase's raw OTP-send errors are either an internal-sounding SMTP
+ * failure or, most often in practice, its own per-email rate limit
+ * ("For security purposes, you can only request this after N seconds") —
+ * neither is something a comedian at a venue should see verbatim.
+ */
+function friendlyOtpErrorMessage(error: { code?: string; status?: number } | null): string | null {
+  if (!error) return null;
+  if (error.code === "over_email_send_rate_limit" || error.status === 429) {
+    return "Please wait about a minute before requesting another code.";
+  }
+  return "We couldn't send you a code just now. Tap resend in a moment, or try again.";
+}
+
 function TextField({
   id,
   label,
@@ -62,9 +76,17 @@ function TextField({
  * (see README: the Supabase "Magic Link" template must include
  * `{{ .Token }}` for this code to actually appear in the email).
  */
-function VerifyCodeStep({ email, privateContentRequested }: { email: string; privateContentRequested: boolean }) {
+function VerifyCodeStep({
+  email,
+  privateContentRequested,
+  initialError,
+}: {
+  email: string;
+  privateContentRequested: boolean;
+  initialError: string | null;
+}) {
   const [code, setCode] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError);
   const [notice, setNotice] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [isResending, setIsResending] = useState(false);
@@ -106,7 +128,7 @@ function VerifyCodeStep({ email, privateContentRequested }: { email: string; pri
 
     setIsResending(false);
     setNotice(resendError ? null : "Sent a new code.");
-    if (resendError) setError(resendError.message);
+    setError(friendlyOtpErrorMessage(resendError));
   }
 
   return (
@@ -175,7 +197,10 @@ export function CheckInForm({ show }: { show: ShowSummary }) {
     useState<PromotionalPermission | null>(null);
 
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ privateContentRequested: boolean } | null>(null);
+  const [result, setResult] = useState<{
+    privateContentRequested: boolean;
+    otpError: string | null;
+  } | null>(null);
   const [isPending, startTransition] = useTransition();
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -220,17 +245,26 @@ export function CheckInForm({ show }: { show: ShowSummary }) {
       // this same page continue straight into their dashboard instead of
       // sending them off to find /login on their own later.
       const supabase = createClient();
-      await supabase.auth.signInWithOtp({
+      const { error: otpError } = await supabase.auth.signInWithOtp({
         email,
         options: { shouldCreateUser: true },
       });
 
-      setResult({ privateContentRequested: response.privateContentRequested });
+      setResult({
+        privateContentRequested: response.privateContentRequested,
+        otpError: friendlyOtpErrorMessage(otpError),
+      });
     });
   }
 
   if (result) {
-    return <VerifyCodeStep email={email} privateContentRequested={result.privateContentRequested} />;
+    return (
+      <VerifyCodeStep
+        email={email}
+        privateContentRequested={result.privateContentRequested}
+        initialError={result.otpError}
+      />
+    );
   }
 
   return (
