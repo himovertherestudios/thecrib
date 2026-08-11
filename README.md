@@ -267,6 +267,25 @@ directly rather than round-tripping through its own API.
 QR codes (already implemented for check-in) only ever encode a
 `/check-in` URL — they never carry a Mux token.
 
+## "Your set is ready" email
+
+When a `full_set` asset transitions to `ready` (not on every webhook
+redelivery — guarded by checking the asset's status *before* the update,
+so a Mux retry can't send this twice), the webhook handler calls
+`lib/email/notify-video-ready.ts`, which:
+
+1. Looks up the consent record for that performance's check-in and only
+   proceeds if `private_content_access` is `requested` — choosing "No, I
+   do not need access" means exactly that, silently, not a bug.
+2. Sends via `lib/email/send-email.ts`, a thin wrapper around Resend's
+   REST API (`RESEND_API_KEY` / `RESEND_FROM_EMAIL`) — separate from
+   Supabase Auth's own SMTP-based emails (magic link/OTP), since Supabase
+   Auth has no generic "send arbitrary email" capability.
+3. Links directly to `/dashboard/sets/[performanceId]`. The link itself
+   grants nothing — same as everywhere else in this app, opening it while
+   signed in as someone else (or not signed in) just hits `/login` or a
+   404, never someone else's footage.
+
 ## Mux setup (Phase 2)
 
 You'll need your own Mux account — create one at
@@ -355,3 +374,8 @@ npm run build
 - Thumbnails aren't rendered anywhere yet (admin or comedian view) — Mux
   generates them, but since assets are signed, displaying them needs a
   signed thumbnail token too, which isn't wired up.
+- The "your set is ready" email is fire-and-forget from inside the
+  webhook handler — a Resend failure is swallowed (logged nowhere), and
+  there's no retry or "resend notification" action if it fails or if a
+  comedian says they never got it. There's also no record of whether a
+  notification was actually sent, only that the asset reached `ready`.
