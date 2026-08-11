@@ -24,6 +24,16 @@ export default function HomePage() {
           Scanning a club QR code? Use the code at the venue to check in — it will take you
           straight to the right show.
         </p>
+
+        <p className="mt-10 text-xs text-stage-500">
+          <Link href="/privacy" className="underline hover:text-stage-300">
+            Privacy Policy
+          </Link>
+          {" · "}
+          <Link href="/terms" className="underline hover:text-stage-300">
+            Terms of Service
+          </Link>
+        </p>
       </div>
     </main>
   );

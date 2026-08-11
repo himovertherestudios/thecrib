@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition, type FormEvent } from "react";
 import { Button } from "@/components/ui/Button";
 import { RadioCardGroup } from "@/components/ui/RadioCardGroup";
@@ -327,6 +328,18 @@ export function CheckInForm({ show }: { show: ShowSummary }) {
       </section>
 
       {error ? <p className="text-sm text-red-400">{error}</p> : null}
+
+      <p className="text-xs text-stage-500">
+        By checking in, you agree to our{" "}
+        <Link href="/terms" className="underline hover:text-stage-300">
+          Terms of Service
+        </Link>{" "}
+        and{" "}
+        <Link href="/privacy" className="underline hover:text-stage-300">
+          Privacy Policy
+        </Link>
+        .
+      </p>
 
       <Button type="submit" disabled={isPending}>
         {isPending ? "Checking in…" : "Check in"}
