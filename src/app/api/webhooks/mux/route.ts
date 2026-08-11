@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getMuxClient } from "@/lib/mux/client";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { notifyComedianVideoReady } from "@/lib/email/notify-video-ready";
 
 /**
  * Mux calls this server-to-server with no Supabase session, so signature
@@ -45,9 +46,15 @@ export async function POST(request: Request) {
 
       const { data: videoAsset } = await supabase
         .from("video_assets")
-        .select("id, performance_id, asset_type")
+        .select("id, performance_id, asset_type, asset_status")
         .eq("mux_asset_id", assetId)
         .maybeSingle();
+
+      // Captured before the update below so a redelivered webhook (Mux
+      // retries on non-2xx responses, and can also just double-send)
+      // doesn't email the comedian a second time — only a genuine
+      // not-ready-to-ready transition should notify.
+      const wasAlreadyReady = videoAsset?.asset_status === "ready";
 
       await supabase
         .from("video_assets")
@@ -67,6 +74,10 @@ export async function POST(request: Request) {
           .from("performances")
           .update({ status: "ready" })
           .eq("id", videoAsset.performance_id);
+
+        if (!wasAlreadyReady) {
+          await notifyComedianVideoReady(videoAsset.performance_id);
+        }
       }
       break;
     }
