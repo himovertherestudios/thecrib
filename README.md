@@ -40,11 +40,20 @@ npm run dev
 3. In **Authentication → URL Configuration**, add your dev and production
    origins (e.g. `http://localhost:3000`, `https://yourdomain.com`) to
    **Redirect URLs** — the magic-link callback (`/auth/callback`) needs
-   this.
-4. In **Authentication → Providers → Email**, passwordless sign-in works
-   out of the box with Supabase's default magic-link email. Customize the
-   email template later if desired.
-5. Apply the database migrations (below).
+   this. Also set **Site URL** to your real production origin once you
+   have one — it's the fallback used when a requested redirect isn't on
+   the allow-list, and defaults to `localhost:3000` otherwise.
+4. Configure **custom SMTP** (Project Settings → Authentication → SMTP
+   Settings). Supabase's built-in mailer is rate-limited and meant for
+   testing only — real usage (and even moderate local testing) needs your
+   own provider (Resend, Postmark, SendGrid, etc.). Without this you'll
+   eventually hit "email rate limit exceeded."
+5. In **Authentication → Email Templates → Magic Link**, make sure the
+   template includes `{{ .Token }}` somewhere visible (e.g. "Or enter this
+   code: {{ .Token }}"). The check-in flow's "enter your code" step (see
+   below) depends on the numeric code actually being shown in the email —
+   Supabase's default template may only show the clickable link.
+6. Apply the database migrations (below).
 
 ### Database migrations
 
@@ -75,6 +84,8 @@ Migration contents:
 | `0008_consent_records.sql` | `consent_records`, RLS |
 | `0009_performances.sql` | `performances`, RLS |
 | `0010_video_assets.sql` | `video_assets`, RLS |
+| `0011_fix_comedian_profiles_recursion.sql` | Fixes an RLS recursion between `comedian_profiles` and `check_ins` (see Row Level Security below) |
+| `0012_fix_comedian_profiles_self_claim_visibility.sql` | Adds the missing SELECT policy that lets a comedian's self-claim UPDATE actually see its own target row |
 
 No seed data is included. To try the app end-to-end: sign in, create an
 organization from `/admin` (you become its first admin automatically),
@@ -83,11 +94,21 @@ in another tab (or on your phone) to check in as a comedian.
 
 ## Authentication
 
-Passwordless email magic links via Supabase Auth (`signInWithOtp`):
+Passwordless via Supabase Auth (`signInWithOtp`), in two different shapes
+depending on entry point:
 
-- `/login` — enter an email, receive a sign-in link.
-- `/auth/callback` — exchanges the emailed code for a session (PKCE flow)
-  and redirects to `/dashboard`.
+- `/login` — enter an email, receive a magic **link**; clicking it hits
+  `/auth/callback`, which exchanges the code for a session (PKCE flow) and
+  redirects to `/dashboard`.
+- `/check-in` — after submitting the intake form, the same email is sent a
+  numeric **code** instead (`CheckInForm.tsx`). The comedian types it back
+  into the same page (`verifyOtp`), which establishes a session directly
+  in the browser with no separate email-link round trip, then hard-navigates
+  to `/dashboard`. This is what lets check-in flow straight into "their own
+  portal" in one sitting, per the product's UX goal, rather than sending
+  them off to discover `/login` on their own afterward. See the email
+  template note above — the code has to actually be visible in the email
+  for this to work.
 - `src/middleware.ts` refreshes the session cookie on every request, since
   Server Components can't write cookies themselves.
 
@@ -111,11 +132,18 @@ be `null` at first, because check-in doesn't require an account:
 1. Someone checks in via QR before ever signing up. `comedian_profiles` is
    created (or matched by email) with `user_id = null`, via the
    service-role client from the check-in server action.
-2. They later sign in with that same email. `claimComedianProfileIfNeeded`
-   (`lib/auth.ts`) runs on every `/dashboard` load and links the row —
-   enforced by an RLS policy that only allows this when the row is
-   unclaimed and the email matches the caller's verified Supabase Auth
-   email.
+2. The check-in flow immediately sends that same email an OTP code and
+   verifies it in the browser (see Authentication above), landing on
+   `/dashboard` in the same sitting. `claimComedianProfileIfNeeded`
+   (`lib/auth.ts`) also runs on every `/dashboard` load regardless — so if
+   someone instead signs in later via `/login` with a matching email, the
+   link still gets claimed then. Either path is enforced by RLS, not by
+   this function's own logic: an UPDATE policy only allows setting
+   `user_id` when the row is unclaimed and the email matches the caller's
+   verified Supabase Auth email, and a matching SELECT policy makes that
+   unclaimed row visible to them in the first place (see Row Level
+   Security below — the two only being *jointly* sufficient, not each
+   alone, is exactly what went wrong the first time this was built).
 
 Any authenticated user can create an organization from `/admin` and
 becomes its first admin automatically (RLS only allows self-inserting as
@@ -140,7 +168,9 @@ Summary of what's enforced in the database:
   organization. No anon/public read policy — the public `/check-in` page
   gets show display info through the service-role client in a server
   component, not a client-side query.
-- **comedian_profiles** — a comedian reads/self-claims only their own row;
+- **comedian_profiles** — a comedian reads/self-claims only their own row,
+  *and* can see an unclaimed row that matches their verified email (see
+  below — required for the self-claim UPDATE to have anything to act on);
   admins can read comedian profiles tied to a check-in at one of their
   shows.
 - **check_ins** / **consent_records** — a comedian reads only their own;
@@ -153,9 +183,26 @@ Summary of what's enforced in the database:
   managed by Phase 2's Mux webhook handler, not by end users.
 
 Helper functions (`is_org_member`, `is_org_admin`, `is_show_org_admin`,
-`is_show_org_member`) are `SECURITY DEFINER` with a pinned `search_path` so
-they can check `organization_members` without RLS-recursing on that same
-table, and can't be hijacked by a hostile search path.
+`is_show_org_member`, `is_own_comedian_profile`, `is_own_performance`) are
+`SECURITY DEFINER` with a pinned `search_path` so they can check the
+underlying table without RLS-recursing back through the caller's own
+policy, and can't be hijacked by a hostile search path. This isn't
+decorative — `0011`/`0012` exist because two variants of this actually
+broke in testing:
+
+1. `comedian_profiles` and `check_ins` each had a SELECT policy
+   subquerying the other table directly (not through a security-definer
+   function), which Postgres rejects outright as infinite recursion
+   (42P17) — and it surfaces on UPDATE too, not just SELECT, per the next
+   point.
+2. Postgres requires a row to be visible via *some* SELECT policy before
+   an UPDATE/DELETE can touch it, in addition to satisfying the
+   UPDATE/DELETE policy's own USING clause. `comedian_profiles` had an
+   UPDATE policy for self-claiming an unclaimed row, but no SELECT policy
+   making that unclaimed row visible in the first place — so the claim
+   silently updated zero rows for anyone without SELECT access via some
+   unrelated path (like already being an org admin, which is exactly what
+   made this look like it worked during initial testing).
 
 ## Mux architecture (Phase 2 — not implemented yet)
 
@@ -227,6 +274,13 @@ npm run build
   `/check-in` with no `show` param shows an instructional message instead.
 - No date/status gating on check-in — a comedian can check in for a show
   regardless of `status` or `show_date`.
+- Check-in now expects the comedian to check their email for a code right
+  there at the venue to reach their dashboard immediately. Their check-in
+  and consent are saved either way, but there's no "skip for now" — if
+  they can't access email in the moment, they simply won't land on a
+  dashboard from that page. They can still sign in later via `/login`
+  with the same email; `claimComedianProfileIfNeeded` runs there too, so
+  the link still gets made.
 - `lib/database.types.ts` is hand-maintained to match
   `supabase/migrations/*.sql`. Regenerate it with
   `supabase gen types typescript` once the Supabase CLI is wired into this
