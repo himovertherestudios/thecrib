@@ -1,18 +1,18 @@
-# TheCrib — Phase 1
+# TheCrib — Phase 1 + Phase 2
 
 A mobile-first web app for comedy clubs: comedians check in via QR code, set
-independent recording / private-access / promotional consent, and later
-privately access their recorded sets.
+independent recording / private-access / promotional consent, and privately
+access their recorded sets via signed Mux playback.
 
-Phase 1 is the foundation only: Next.js + Supabase data model, auth, RLS,
-check-in flow, and admin/comedian dashboards. **No Mux integration, no
-Stripe, no email automation** — those are later phases.
+Phase 1: Next.js + Supabase data model, auth, RLS, check-in flow, and
+admin/comedian dashboards. Phase 2: Mux direct upload, webhook processing,
+and signed private playback. **No Stripe, no email automation yet.**
 
 ## Stack
 
 - Next.js 15 (App Router) + TypeScript + Tailwind CSS
 - Supabase (Postgres, Auth, Row Level Security)
-- Mux (Phase 2 — video ingestion/streaming/signed playback; schema is ready, no code wired up yet)
+- Mux (`@mux/mux-node`, `@mux/mux-uploader-react`, `@mux/mux-player-react`) — video ingestion, processing, and signed private playback
 
 ## Local setup
 
@@ -204,46 +204,92 @@ broke in testing:
    unrelated path (like already being an org admin, which is exactly what
    made this look like it worked during initial testing).
 
-## Mux architecture (Phase 2 — not implemented yet)
+## Mux architecture (Phase 2)
 
-`video_assets` and `performances` already model what Phase 2 needs:
+Built on the `@mux/mux-node` server SDK (v14) plus `@mux/mux-uploader-react`
+and `@mux/mux-player-react` for the two client-side UI pieces. Everything
+that talks to Mux with real credentials lives in `lib/mux/` and is
+`server-only`.
+
+`video_assets` and `performances` model this end to end:
 
 - A performance can have zero, one, or many video assets
   (`asset_type`: `full_set`, `private_preview`, `social_clip`,
   `clean_clip`, `promo_clip`) — never assume one performance = one file.
-- `playback_policy` defaults to `signed`; private footage must never use a
+  Only `full_set` and `private_preview` are ever offered for private
+  playback on `/dashboard/sets/[id]`.
+- `playback_policy` is always `signed` — private footage never uses a
   public Mux playback ID.
-- `asset_status` (`waiting_for_upload` → `uploading` → `preparing` →
-  `ready` / `errored` / `deleted`) models Mux's asynchronous processing —
-  the app must never assume a newly created asset is immediately playable.
+- `asset_status` (`waiting_for_upload` → `preparing` → `ready` /
+  `errored`) models Mux's asynchronous processing — the private player
+  page checks this and shows a "not ready yet" state rather than assuming
+  a newly created asset is immediately playable.
 
-Planned flow, once approved:
+**Admin upload flow** (`/admin/shows/[showId]` → "Create performance" →
+`/admin/performances/[id]`):
 
-1. Admin opens a performance, chooses "Upload Set". The server creates a
-   Mux Direct Upload URL; the browser uploads straight to Mux (the video
-   never passes through the Next.js server).
-2. Mux processes the asset asynchronously and calls
-   `/api/webhooks/mux`, which verifies the Mux webhook signature and
-   updates `video_assets`/`performances` idempotently (keyed on Mux's IDs,
-   so redelivery can't create duplicate rows).
-3. Playback: `/api/performances/[performanceId]/playback` authenticates
-   the Supabase user, confirms they own the comedian profile the
-   performance belongs to, confirms the asset is `ready`, then mints a
-   short-lived signed Mux playback JWT server-side
-   (`lib/mux/sign-playback-token.ts`) and returns only what Mux Player
-   needs. The signing private key never leaves the server.
+1. Admin picks a video type and clicks "Upload Set". The server action
+   `createDirectUpload` (`app/admin/performances/actions.ts`) creates a
+   Mux Direct Upload (`playback_policies: ["signed"]`) and inserts a
+   `video_assets` row (`waiting_for_upload`, `mux_upload_id` set).
+2. The browser gets back only the upload URL and hands it to
+   `<MuxUploader endpoint={uploadUrl} />` — the video file goes straight
+   from the browser to Mux, never through this server.
+3. Mux processes the asset asynchronously and calls `/api/webhooks/mux`.
+
+**Webhook** (`app/api/webhooks/mux/route.ts`): verifies the signature via
+`mux.webhooks.unwrap()` before trusting anything in the payload — an
+unverified request is rejected outright, never partially trusted. Handles:
+- `video.upload.asset_created` → links `mux_asset_id` to the row found by
+  `mux_upload_id`, status → `preparing`.
+- `video.asset.ready` → status → `ready`, stores the signed playback ID,
+  duration, aspect ratio; if the asset is a `full_set`, also flips the
+  parent `performances.status` to `ready`.
+- `video.asset.errored` → status → `errored`.
+
+All three update an existing row by a Mux-issued id rather than inserting,
+so redelivering the same event is naturally idempotent.
+
+**Private playback** (`/dashboard/sets/[performanceId]`, backed by
+`lib/mux/get-performance-playback.ts` and
+`/api/performances/[performanceId]/playback`): the RLS-respecting server
+client re-confirms the performance belongs to the signed-in comedian
+(returns nothing otherwise — the page 404s rather than leaking whether the
+id exists), picks the most recent ready `full_set`/`private_preview`
+asset, and only then calls `lib/mux/sign-playback-token.ts` to mint a
+signed JWT (default 6h expiration) via `mux.jwt.signPlaybackId()`. The
+page renders `<MuxPlayer playbackId tokens={{ playback: token }} />`
+directly — the signing private key never reaches the browser. The API
+route exists as the same logic behind a fetchable endpoint (for a future
+client-side token refresh), but the page itself calls the shared function
+directly rather than round-tripping through its own API.
 
 QR codes (already implemented for check-in) only ever encode a
-`/check-in` URL — they will never carry a Mux token.
+`/check-in` URL — they never carry a Mux token.
 
-## Mux credentials (Phase 2)
+## Mux setup (Phase 2)
 
-Placeholders are in `.env.example`. All are server-only:
+You'll need your own Mux account — create one at
+[mux.com](https://www.mux.com), then:
 
-- `MUX_TOKEN_ID` / `MUX_TOKEN_SECRET` — API access for creating uploads/assets.
-- `MUX_SIGNING_KEY_ID` / `MUX_SIGNING_PRIVATE_KEY` — for signing private
-  playback JWTs. Generate a signing key in the Mux dashboard.
-- `MUX_WEBHOOK_SECRET` — for verifying `/api/webhooks/mux` payloads.
+1. **API access token**: Mux dashboard → Settings → API Access Tokens →
+   create one with Mux Video read/write permissions. Copy the Token ID and
+   Token Secret into `MUX_TOKEN_ID` / `MUX_TOKEN_SECRET`.
+2. **Signing key** (for private/signed playback): Mux dashboard →
+   Settings → Signing Keys → create one. This gives you a Signing Key ID
+   and downloads a private key file. Set `MUX_SIGNING_KEY_ID` to the key
+   ID, and `MUX_SIGNING_PRIVATE_KEY` to the private key's contents
+   (base64, as downloaded — paste it as one value, preserving the
+   `\n`-containing structure if your env var loader needs it escaped).
+3. **Webhook**: Mux dashboard → Settings → Webhooks → add an endpoint
+   pointing at `https://<your-domain>/api/webhooks/mux`. Copy the signing
+   secret it gives you into `MUX_WEBHOOK_SECRET`. This has to be a real
+   reachable URL — it won't work against `localhost` unless you tunnel it
+   (e.g. `ngrok http 3000` and use the tunnel URL while testing locally).
+4. Add all five vars to `.env.local` (and to Vercel's environment
+   variables for production — see `.env.example` for the exact names).
+
+All five are server-only; none are ever prefixed `NEXT_PUBLIC_`.
 
 ## Deployment
 
@@ -286,3 +332,26 @@ npm run build
   `supabase gen types typescript` once the Supabase CLI is wired into this
   project's tooling, to avoid drift.
 - No automated tests yet.
+
+## Known limitations (Phase 2)
+
+- No way to reorder/schedule performances, edit a performance's details,
+  or delete a video asset from the UI — create/upload only.
+- No standalone "all performances" admin index — a performance is only
+  reachable via its show's check-in list (`/admin/shows/[id]` → "View
+  performance"). Fine for now since that's also how they're created, but
+  won't scale to browsing performances across shows.
+- The signed playback token (6h expiration) isn't refreshed client-side if
+  a viewing session outlives it; the comedian would need to reload the
+  page. The `/api/performances/[id]/playback` endpoint exists to support
+  adding that later.
+- No admin UI surfaces `errored` asset status prominently yet beyond the
+  badge on the performance detail page — no retry-upload action.
+- Webhook signature verification requires `MUX_WEBHOOK_SECRET` to be set
+  correctly for the *same* Mux webhook endpoint you're testing against;
+  mismatched secrets fail closed (request rejected), which is correct
+  behavior but can look like "nothing is happening" if misconfigured —
+  check Mux's dashboard webhook delivery log if updates aren't landing.
+- Thumbnails aren't rendered anywhere yet (admin or comedian view) — Mux
+  generates them, but since assets are signed, displaying them needs a
+  signed thumbnail token too, which isn't wired up.
