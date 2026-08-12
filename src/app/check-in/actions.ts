@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { CURRENT_CONSENT_VERSION } from "@/lib/consent";
+import { checkAndRecordCheckInAttempt } from "@/app/check-in/rate-limit";
 
 const optionalText = (max: number) =>
   z
@@ -44,6 +45,21 @@ export type CheckInResult =
   | { ok: false; error: string };
 
 export async function submitCheckIn(formData: FormData): Promise<CheckInResult> {
+  // Honeypot: a real visitor never sees or fills this field (hidden off-screen
+  // in CheckInForm.tsx). Anything that fills it is a bot — feign success so it
+  // doesn't learn to look for a different tell, but write nothing.
+  if (formData.get("website")) {
+    return { ok: true, privateContentRequested: false };
+  }
+
+  const withinRateLimit = await checkAndRecordCheckInAttempt();
+  if (!withinRateLimit) {
+    return {
+      ok: false,
+      error: "Too many check-in attempts from your network. Please try again in a few minutes.",
+    };
+  }
+
   const parsed = CheckInSchema.safeParse({
     showId: formData.get("showId"),
     stageName: formData.get("stageName"),
