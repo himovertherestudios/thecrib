@@ -5,20 +5,24 @@ import { generateQrDataUrl } from "@/lib/qr";
 import { getSiteOrigin } from "@/lib/url";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { ConfirmSubmitButton } from "@/components/ui/ConfirmSubmitButton";
 import {
   PROMOTIONAL_PERMISSION_LABEL,
   RECORDING_CONSENT_LABEL,
   PRIVATE_ACCESS_LABEL,
 } from "@/lib/consent";
-import type { CheckIn, ConsentRecord } from "@/lib/database.types";
+import type { CheckIn, ConsentRecord, ShowStatus } from "@/lib/database.types";
 import { createPerformanceFromCheckIn } from "../../performances/actions";
+import { updateShow, deleteShow } from "../../actions";
+
+const SHOW_STATUS_OPTIONS: ShowStatus[] = ["scheduled", "live", "completed", "cancelled"];
 
 interface ShowDetailRow {
   id: string;
   title: string;
   show_date: string;
-  status: string;
-  clubs: { name: string } | null;
+  status: ShowStatus;
+  clubs: { name: string; organization_id: string } | null;
 }
 
 interface CheckInWithConsentRow extends CheckIn {
@@ -31,16 +35,19 @@ function firstConsent(consent: ConsentRecord | ConsentRecord[] | null): ConsentR
 
 export default async function AdminShowDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ showId: string }>;
+  searchParams: Promise<{ error?: string }>;
 }) {
   const { showId } = await params;
+  const { error } = await searchParams;
   const supabase = await createClient();
 
   const { data: show } = await supabase
     .from("shows")
-    .select<"id, title, show_date, status, clubs ( name )", ShowDetailRow>(
-      "id, title, show_date, status, clubs ( name )",
+    .select<"id, title, show_date, status, clubs ( name, organization_id )", ShowDetailRow>(
+      "id, title, show_date, status, clubs ( name, organization_id )",
     )
     .eq("id", showId)
     .maybeSingle();
@@ -84,6 +91,8 @@ export default async function AdminShowDetailPage({
           year: "numeric",
         })}
       </p>
+
+      {error ? <p className="mt-4 text-sm text-red-400">{error}</p> : null}
 
       {deniedRecordingCount > 0 ? (
         <div className="mt-6 rounded-xl2 border border-red-500/40 bg-red-500/10 px-4 py-3">
@@ -188,6 +197,62 @@ export default async function AdminShowDetailPage({
             <img src={qrDataUrl} alt="Check-in QR code" className="h-auto w-full" />
           </div>
           <p className="mt-2 break-all text-xs text-stage-500">{checkInUrl}</p>
+        </section>
+
+        <section>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-stage-400">
+            Edit show
+          </h2>
+          <form
+            action={updateShow}
+            className="mt-3 flex flex-col gap-3 rounded-xl2 border border-stage-700 bg-stage-900 p-4"
+          >
+            <input type="hidden" name="showId" value={show.id} />
+            <input
+              name="title"
+              required
+              defaultValue={show.title}
+              placeholder="Show title"
+              className="tap-target rounded-xl2 border border-stage-600 bg-stage-850 px-4 py-3 text-white focus:border-marquee focus:outline-none"
+            />
+            <input
+              name="showDate"
+              type="date"
+              required
+              defaultValue={show.show_date}
+              className="tap-target rounded-xl2 border border-stage-600 bg-stage-850 px-4 py-3 text-white focus:border-marquee focus:outline-none"
+            />
+            <select
+              name="status"
+              defaultValue={show.status}
+              className="tap-target rounded-xl2 border border-stage-600 bg-stage-850 px-4 py-3 text-white focus:border-marquee focus:outline-none"
+            >
+              {SHOW_STATUS_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+            <Button type="submit" variant="secondary">
+              Save changes
+            </Button>
+          </form>
+
+          <form action={deleteShow} className="mt-3">
+            <input type="hidden" name="showId" value={show.id} />
+            <input
+              type="hidden"
+              name="organizationId"
+              value={show.clubs?.organization_id ?? ""}
+            />
+            <ConfirmSubmitButton
+              variant="ghost"
+              confirmMessage={`Delete "${show.title}"? This permanently deletes all of its check-ins, performances, and video asset records. This cannot be undone.`}
+              className="text-red-400 hover:text-red-300"
+            >
+              Delete show
+            </ConfirmSubmitButton>
+          </form>
         </section>
       </div>
     </div>
