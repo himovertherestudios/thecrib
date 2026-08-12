@@ -1,9 +1,9 @@
 import { notFound } from "next/navigation";
-import MuxPlayer from "@mux/mux-player-react";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { getPerformancePlaybackForUser } from "@/lib/mux/get-performance-playback";
 import { Badge } from "@/components/ui/Badge";
+import { SignedVideoPlayer } from "./SignedVideoPlayer";
 
 interface PerformanceWithShowRow {
   id: string;
@@ -69,12 +69,11 @@ export default async function ComedianSetPage({
       <div className="mt-6">
         {playback.ok ? (
           <div className="overflow-hidden rounded-xl2 border border-stage-700">
-            <MuxPlayer
-              playbackId={playback.playbackId}
-              tokens={{ playback: playback.token }}
-              streamType="on-demand"
-              metadata={{ video_title: performance.comedian_profiles?.stage_name ?? "Set" }}
-              style={{ width: "100%", aspectRatio: "16 / 9" }}
+            <SignedVideoPlayer
+              performanceId={performanceId}
+              initialPlaybackId={playback.playbackId}
+              initialToken={playback.token}
+              title={performance.comedian_profiles?.stage_name ?? "Set"}
             />
           </div>
         ) : (
