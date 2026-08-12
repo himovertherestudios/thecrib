@@ -1,8 +1,11 @@
 import Link from "next/link";
-import { requireUser } from "@/lib/auth";
+import { requireUser, claimPendingOrgInvites } from "@/lib/auth";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  await requireUser();
+  const user = await requireUser();
+  if (user.email) {
+    await claimPendingOrgInvites(user.id, user.email);
+  }
 
   return (
     <div className="min-h-screen bg-stage-950">
@@ -17,6 +20,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             </Link>
             <Link href="/admin/shows" className="hover:text-white">
               Shows
+            </Link>
+            <Link href="/admin/team" className="hover:text-white">
+              Team
             </Link>
           </nav>
         </div>

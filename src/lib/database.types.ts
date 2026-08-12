@@ -64,6 +64,16 @@ export type OrganizationMember = {
   created_at: string;
 };
 
+export type OrganizationInvite = {
+  id: string;
+  organization_id: string;
+  email: string;
+  role: OrgRole;
+  invited_by: string | null;
+  created_at: string;
+  accepted_at: string | null;
+};
+
 export type Club = {
   id: string;
   organization_id: string;
@@ -227,6 +237,28 @@ export type Database = {
           user_id?: string;
           role?: OrgRole;
           created_at?: string;
+        };
+        Relationships: [];
+      };
+      organization_invites: {
+        Row: OrganizationInvite;
+        Insert: {
+          id?: string;
+          organization_id: string;
+          email: string;
+          role: OrgRole;
+          invited_by?: string | null;
+          created_at?: string;
+          accepted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          organization_id?: string;
+          email?: string;
+          role?: OrgRole;
+          invited_by?: string | null;
+          created_at?: string;
+          accepted_at?: string | null;
         };
         Relationships: [];
       };

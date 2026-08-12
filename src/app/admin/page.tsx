@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getAdminOrgMemberships } from "@/lib/auth";
+import { getOrgMemberships } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/Button";
 import { createOrganization } from "./actions";
@@ -17,7 +17,7 @@ export default async function AdminDashboardPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const { error } = await searchParams;
-  const orgs = await getAdminOrgMemberships();
+  const orgs = await getOrgMemberships();
 
   if (orgs.length === 0) {
     return (
