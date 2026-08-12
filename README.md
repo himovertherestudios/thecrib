@@ -10,7 +10,7 @@ and signed private playback. **No Stripe, no email automation yet.**
 
 ## Stack
 
-- Next.js 15 (App Router) + TypeScript + Tailwind CSS
+- Next.js 16 (App Router) + TypeScript + Tailwind CSS
 - Supabase (Postgres, Auth, Row Level Security)
 - Mux (`@mux/mux-node`, `@mux/mux-uploader-react`, `@mux/mux-player-react`) — video ingestion, processing, and signed private playback
 
@@ -342,8 +342,46 @@ You'll need your own Sentry account — create one at
 ```bash
 npm run lint
 npm run typecheck
+npm run test
 npm run build
 ```
+
+## Testing
+
+Two layers, both under `npm run test` (Vitest):
+
+- **Unit tests** (`tests/unit/`) — pure logic (slug generation, OTP error
+  messages, QR encoding, site-origin resolution). No infrastructure
+  needed.
+- **Integration tests** (`tests/integration/`) — exercise real RLS
+  policies against your actual Supabase project (there's no local
+  Supabase available in every dev environment, and RLS bugs are exactly
+  the kind unit tests can't catch — three of them were found and fixed
+  this way during development; see migrations 0012, 0015, 0016). Each
+  test creates its own disposable organizations/shows/comedian
+  profiles/auth users with unique, timestamped emails
+  (`tests/helpers/supabase.ts`) and deletes them in an `afterAll` hook.
+  A test signs in as a real user via `admin.generateLink` +
+  `verifyOtp({ token_hash })` — the same mechanism Supabase's own magic
+  links use — so no email ever actually gets sent.
+
+Needs `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and
+`SUPABASE_SERVICE_ROLE_KEY` (same vars as the app itself; loaded from
+`.env.local` locally, from repo secrets in CI — see
+`.github/workflows/ci.yml`).
+
+**Supabase's OTP verification rate limit** (Authentication → Rate
+Limits in the Supabase dashboard) gates how many integration test runs
+you can do per hour — each full run signs in as ~9 disposable users. If
+you're running the suite frequently (or CI is pushing often), raise
+that limit; the default is tuned for preventing OTP abuse on a live
+app, not for a test suite that legitimately needs many sign-ins.
+
+If a run crashes mid-way (rare, but possible if the process is killed),
+disposable test users/orgs may be left behind. They're all named `Test
+Org`/`Test Club`/`Test Comedian` or have emails matching
+`test-<label>-<timestamp>-<random>@example.com`, so they're easy to
+spot and safe to delete manually via the Supabase dashboard if needed.
 
 ## Known limitations (Phase 1)
 
