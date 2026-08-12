@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getMuxClient } from "@/lib/mux/client";
 import { getSiteOrigin } from "@/lib/url";
-import type { VideoAssetType } from "@/lib/database.types";
+import type { PerformanceStatus, VideoAssetType } from "@/lib/database.types";
 
 /**
  * Creates a performance from an existing check-in. Uses the RLS-respecting
@@ -131,4 +131,49 @@ export async function markUploadFailed(videoAssetId: string): Promise<void> {
     .update({ asset_status: "errored" })
     .eq("id", videoAssetId)
     .eq("asset_status", "waiting_for_upload");
+}
+
+export async function updatePerformance(formData: FormData) {
+  const performanceId = String(formData.get("performanceId") ?? "");
+  const status = String(formData.get("status") ?? "") as PerformanceStatus;
+  const scheduledOrderRaw = String(formData.get("scheduledOrder") ?? "").trim();
+  const setLengthMinutesRaw = String(formData.get("setLengthMinutes") ?? "").trim();
+
+  if (!performanceId) {
+    redirect("/admin/shows");
+  }
+
+  const scheduledOrder = scheduledOrderRaw ? Number(scheduledOrderRaw) : null;
+  const setLengthSeconds = setLengthMinutesRaw ? Number(setLengthMinutesRaw) * 60 : null;
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("performances")
+    .update({ status, scheduled_order: scheduledOrder, set_length_seconds: setLengthSeconds })
+    .eq("id", performanceId);
+
+  if (error) {
+    redirect(
+      `/admin/performances/${performanceId}?error=${encodeURIComponent("Could not update performance.")}`,
+    );
+  }
+
+  revalidatePath(`/admin/performances/${performanceId}`);
+  redirect(`/admin/performances/${performanceId}`);
+}
+
+/**
+ * Deleting a performance cascades to its video_assets rows (on delete
+ * cascade) — it does not delete the underlying asset on Mux itself, only
+ * our record of it. The confirmation copy in the UI says so explicitly.
+ */
+export async function deletePerformance(formData: FormData) {
+  const performanceId = String(formData.get("performanceId") ?? "");
+  const showId = String(formData.get("showId") ?? "");
+
+  const supabase = await createClient();
+  await supabase.from("performances").delete().eq("id", performanceId);
+
+  revalidatePath(`/admin/shows/${showId}`);
+  redirect(`/admin/shows/${showId}`);
 }

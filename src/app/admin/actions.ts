@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { slugify } from "@/lib/slug";
 import { notifyOrgInvite } from "@/lib/email/notify-org-invite";
-import type { OrgRole } from "@/lib/database.types";
+import type { OrgRole, ShowStatus } from "@/lib/database.types";
 
 /**
  * All admin mutations below use the RLS-respecting server client (not the
@@ -158,4 +158,47 @@ export async function revokeInvite(formData: FormData) {
 
   revalidatePath("/admin/team");
   redirect(`/admin/team?org=${organizationId}`);
+}
+
+export async function updateShow(formData: FormData) {
+  const showId = String(formData.get("showId") ?? "");
+  const title = String(formData.get("title") ?? "").trim();
+  const showDate = String(formData.get("showDate") ?? "");
+  const status = String(formData.get("status") ?? "") as ShowStatus;
+
+  if (!showId || !title || !showDate) {
+    redirect(
+      `/admin/shows/${showId}?error=${encodeURIComponent("Title and date are required.")}`,
+    );
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("shows")
+    .update({ title, show_date: showDate, status })
+    .eq("id", showId);
+
+  if (error) {
+    redirect(`/admin/shows/${showId}?error=${encodeURIComponent("Could not update show.")}`);
+  }
+
+  revalidatePath(`/admin/shows/${showId}`);
+  redirect(`/admin/shows/${showId}`);
+}
+
+/**
+ * Deleting a show cascades to its performances, video_assets, check_ins,
+ * and consent_records (all on delete cascade) — the confirmation copy in
+ * the UI says so explicitly, since this is the one action here that
+ * can't be undone from within the app.
+ */
+export async function deleteShow(formData: FormData) {
+  const showId = String(formData.get("showId") ?? "");
+  const organizationId = String(formData.get("organizationId") ?? "");
+
+  const supabase = await createClient();
+  await supabase.from("shows").delete().eq("id", showId);
+
+  revalidatePath("/admin/shows");
+  redirect(`/admin/shows?org=${organizationId}`);
 }
