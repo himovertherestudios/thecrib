@@ -310,6 +310,25 @@ You'll need your own Mux account — create one at
 
 All five are server-only; none are ever prefixed `NEXT_PUBLIC_`.
 
+## Sentry setup
+
+You'll need your own Sentry account — create one at
+[sentry.io](https://sentry.io) (free tier), then:
+
+1. Create a project → platform **Next.js**. Copy the DSN it gives you into
+   `NEXT_PUBLIC_SENTRY_DSN`. This one is prefixed `NEXT_PUBLIC_` on
+   purpose — the client-side SDK needs it in the browser bundle.
+2. Optional, but needed for readable stack traces in production (without
+   it, error reports show minified/obfuscated code instead of your
+   actual source): Settings → Account → API → Auth Tokens → create one
+   with `project:releases` scope. Set `SENTRY_AUTH_TOKEN` to it, and
+   `SENTRY_ORG` / `SENTRY_PROJECT` to the slugs from your project's URL
+   (`sentry.io/organizations/<org>/projects/<project>/`).
+3. Add all four vars to `.env.local` and to Vercel's environment
+   variables for production.
+
+`SENTRY_AUTH_TOKEN` is server/build-only; never prefix it `NEXT_PUBLIC_`.
+
 ## Deployment
 
 - Any Next.js host (Vercel, etc.) works. Set the environment variables
