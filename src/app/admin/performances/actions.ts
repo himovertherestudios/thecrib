@@ -52,7 +52,7 @@ export async function createPerformanceFromCheckIn(formData: FormData) {
 }
 
 export type CreateDirectUploadResult =
-  | { ok: true; uploadUrl: string }
+  | { ok: true; uploadUrl: string; videoAssetId: string }
   | { ok: false; error: string };
 
 /**
@@ -60,7 +60,9 @@ export type CreateDirectUploadResult =
  * (`waiting_for_upload`). The browser uploads the file straight to the
  * returned URL — the video itself never passes through this server. Mux
  * processes it asynchronously; the webhook handler is what eventually
- * marks the row `ready`, not this function.
+ * marks the row `ready`, not this function. Returns the row's id so the
+ * caller can mark it `errored` if the browser-to-Mux upload itself fails
+ * (a failure the webhook never hears about, since no asset was created).
  */
 export async function createDirectUpload(
   performanceId: string,
@@ -79,10 +81,10 @@ export async function createDirectUpload(
   }
 
   const origin = await getSiteOrigin();
-  const mux = getMuxClient();
 
   let upload;
   try {
+    const mux = getMuxClient();
     upload = await mux.video.uploads.create({
       cors_origin: origin,
       new_asset_settings: { playback_policies: ["signed"] },
@@ -95,18 +97,38 @@ export async function createDirectUpload(
     return { ok: false, error: "Mux did not return an upload URL." };
   }
 
-  const { error: insertError } = await supabase.from("video_assets").insert({
-    performance_id: performanceId,
-    asset_type: assetType,
-    mux_upload_id: upload.id,
-    playback_policy: "signed",
-    asset_status: "waiting_for_upload",
-  });
+  const { data: videoAsset, error: insertError } = await supabase
+    .from("video_assets")
+    .insert({
+      performance_id: performanceId,
+      asset_type: assetType,
+      mux_upload_id: upload.id,
+      playback_policy: "signed",
+      asset_status: "waiting_for_upload",
+    })
+    .select("id")
+    .single();
 
-  if (insertError) {
+  if (insertError || !videoAsset) {
     return { ok: false, error: "Could not save the upload record." };
   }
 
   revalidatePath(`/admin/performances/${performanceId}`);
-  return { ok: true, uploadUrl: upload.url };
+  return { ok: true, uploadUrl: upload.url, videoAssetId: videoAsset.id };
+}
+
+/**
+ * Marks a video_assets row `errored` after the browser-to-Mux upload
+ * itself fails (as opposed to Mux failing to process a file it received
+ * — that's video.asset.errored in the webhook handler). Lets the admin
+ * see the failed attempt in the asset list instead of a `waiting_for_upload`
+ * row that Mux will never move out of, since no asset was ever created.
+ */
+export async function markUploadFailed(videoAssetId: string): Promise<void> {
+  const supabase = await createClient();
+  await supabase
+    .from("video_assets")
+    .update({ asset_status: "errored" })
+    .eq("id", videoAssetId)
+    .eq("asset_status", "waiting_for_upload");
 }

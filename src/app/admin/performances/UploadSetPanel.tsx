@@ -3,7 +3,7 @@
 import { useState } from "react";
 import MuxUploader from "@mux/mux-uploader-react";
 import { Button } from "@/components/ui/Button";
-import { createDirectUpload } from "./actions";
+import { createDirectUpload, markUploadFailed } from "./actions";
 import type { VideoAssetType } from "@/lib/database.types";
 
 const ASSET_TYPE_OPTIONS: { value: VideoAssetType; label: string }[] = [
@@ -17,14 +17,24 @@ const ASSET_TYPE_OPTIONS: { value: VideoAssetType; label: string }[] = [
 export function UploadSetPanel({ performanceId }: { performanceId: string }) {
   const [assetType, setAssetType] = useState<VideoAssetType>("full_set");
   const [uploadUrl, setUploadUrl] = useState<string | null>(null);
+  const [videoAssetId, setVideoAssetId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<"idle" | "starting" | "uploading" | "done">("idle");
+  const [status, setStatus] = useState<"idle" | "starting" | "uploading" | "failed" | "done">(
+    "idle",
+  );
 
   async function handleStart() {
     setError(null);
     setStatus("starting");
 
-    const result = await createDirectUpload(performanceId, assetType);
+    let result;
+    try {
+      result = await createDirectUpload(performanceId, assetType);
+    } catch {
+      setError("Something went wrong starting the upload. You can try again.");
+      setStatus("idle");
+      return;
+    }
 
     if (!result.ok) {
       setError(result.error);
@@ -33,7 +43,23 @@ export function UploadSetPanel({ performanceId }: { performanceId: string }) {
     }
 
     setUploadUrl(result.uploadUrl);
+    setVideoAssetId(result.videoAssetId);
     setStatus("uploading");
+  }
+
+  function handleUploadError() {
+    setError("The upload failed. You can try again.");
+    setStatus("failed");
+    if (videoAssetId) {
+      markUploadFailed(videoAssetId).catch(() => {});
+    }
+  }
+
+  function handleRetry() {
+    setError(null);
+    setUploadUrl(null);
+    setVideoAssetId(null);
+    setStatus("idle");
   }
 
   if (status === "done") {
@@ -46,15 +72,21 @@ export function UploadSetPanel({ performanceId }: { performanceId: string }) {
     );
   }
 
+  if (status === "failed") {
+    return (
+      <div className="rounded-xl2 border border-red-500/30 bg-red-500/10 p-4">
+        <p className="text-sm text-red-400">{error}</p>
+        <Button type="button" onClick={handleRetry} className="mt-3">
+          Try again
+        </Button>
+      </div>
+    );
+  }
+
   if (uploadUrl) {
     return (
       <div className="rounded-xl2 border border-stage-700 bg-stage-850 p-4">
-        <MuxUploader
-          endpoint={uploadUrl}
-          onSuccess={() => setStatus("done")}
-          onUploadError={() => setError("The upload failed. You can try again.")}
-        />
-        {error ? <p className="mt-2 text-sm text-red-400">{error}</p> : null}
+        <MuxUploader endpoint={uploadUrl} onSuccess={() => setStatus("done")} onUploadError={handleUploadError} />
       </div>
     );
   }
