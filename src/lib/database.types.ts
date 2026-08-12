@@ -157,6 +157,12 @@ export type VideoAsset = {
   updated_at: string;
 };
 
+export type CheckInRateLimit = {
+  id: string;
+  ip_address: string;
+  created_at: string;
+};
+
 // Minimal typed schema surface for supabase-js. Hand-maintained to match
 // supabase/migrations/*.sql — regenerate with `supabase gen types` once the
 // Supabase CLI is wired into this project's tooling. Insert/Update shapes
@@ -421,6 +427,20 @@ export type Database = {
           thumbnail_url?: string | null;
           created_at?: string;
           updated_at?: string;
+        };
+        Relationships: [];
+      };
+      check_in_rate_limits: {
+        Row: CheckInRateLimit;
+        Insert: {
+          id?: string;
+          ip_address: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          ip_address?: string;
+          created_at?: string;
         };
         Relationships: [];
       };

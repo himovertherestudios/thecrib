@@ -189,6 +189,7 @@ export function CheckInForm({ show }: { show: ShowSummary }) {
   const [instagram, setInstagram] = useState("");
   const [tiktok, setTiktok] = useState("");
   const [expectedSetLengthMinutes, setExpectedSetLengthMinutes] = useState("");
+  const [website, setWebsite] = useState("");
 
   const [recordingConsent, setRecordingConsent] = useState<RecordingConsent | null>(null);
   const [privateContentAccess, setPrivateContentAccess] = useState<PrivateContentAccess | null>(
@@ -222,6 +223,7 @@ export function CheckInForm({ show }: { show: ShowSummary }) {
     }
 
     const formData = new FormData();
+    formData.set("website", website);
     formData.set("showId", show.id);
     formData.set("stageName", stageName);
     formData.set("legalName", legalName);
@@ -270,6 +272,21 @@ export function CheckInForm({ show }: { show: ShowSummary }) {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-8">
+      {/* Honeypot: off-screen, not display:none, so naive bots that skip
+          hidden fields still fill it. Real visitors never see or tab here. */}
+      <div className="absolute -left-[9999px] top-0 -z-10" aria-hidden="true">
+        <label htmlFor="website">Website</label>
+        <input
+          id="website"
+          name="website"
+          type="text"
+          tabIndex={-1}
+          autoComplete="off"
+          value={website}
+          onChange={(e) => setWebsite(e.target.value)}
+        />
+      </div>
+
       <section className="flex flex-col gap-4">
         <h2 className="font-display text-lg font-semibold text-white">Your info</h2>
         <TextField id="stageName" label="Stage Name" required value={stageName} onChange={setStageName} />
