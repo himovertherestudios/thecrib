@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getAdminOrgMemberships } from "@/lib/auth";
+import { getOrgMemberships } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/Button";
 import { createClub, createShow } from "../actions";
@@ -19,7 +19,7 @@ export default async function AdminShowsPage({
   searchParams: Promise<{ org?: string; error?: string }>;
 }) {
   const { org: orgParam, error } = await searchParams;
-  const orgs = await getAdminOrgMemberships();
+  const orgs = await getOrgMemberships();
 
   if (orgs.length === 0) redirect("/admin");
 

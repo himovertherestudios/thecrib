@@ -31,6 +31,18 @@ interface OrgMemberRow {
 
 /** Organizations the current user administers (role = 'admin'). */
 export async function getAdminOrgMemberships(): Promise<OrgMembership[]> {
+  const memberships = await getOrgMemberships();
+  return memberships.filter((m) => m.role === "admin");
+}
+
+/**
+ * Organizations the current user belongs to, admin or staff. Dashboard
+ * navigation (which orgs to show, whether to show the "create an
+ * organization" empty state) uses this — actual admin-only mutations
+ * (inviting teammates, creating shows, etc.) stay gated by RLS's
+ * is_org_admin checks regardless of what this returns.
+ */
+export async function getOrgMemberships(): Promise<OrgMembership[]> {
   const supabase = await createClient();
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) return [];
@@ -40,8 +52,7 @@ export async function getAdminOrgMemberships(): Promise<OrgMembership[]> {
     .select<"organization_id, role, organizations ( name )", OrgMemberRow>(
       "organization_id, role, organizations ( name )",
     )
-    .eq("user_id", userData.user.id)
-    .eq("role", "admin");
+    .eq("user_id", userData.user.id);
 
   if (error || !data) return [];
 
@@ -79,6 +90,47 @@ export async function claimComedianProfileIfNeeded(userId: string, email: string
     .update({ user_id: userId })
     .is("user_id", null)
     .eq("email", email.toLowerCase());
+}
+
+/**
+ * If the signed-in user's email matches a pending organization_invites
+ * row, accepts it: inserts their organization_members row (allowed by the
+ * "organization_members_insert_via_invite" RLS policy, which checks for
+ * exactly this — a pending invite matching the caller's own verified
+ * email) and marks the invite accepted. Safe to call on every /admin
+ * load — a user with no pending invites is a no-op, and an already-
+ * accepted invite no longer matches the "accepted_at is null" policy, so
+ * this can't double-insert on repeat calls.
+ */
+export async function claimPendingOrgInvites(userId: string, email: string) {
+  const supabase = await createClient();
+
+  const { data: invites } = await supabase
+    .from("organization_invites")
+    .select("id, organization_id, role")
+    .is("accepted_at", null)
+    .eq("email", email.toLowerCase());
+
+  if (!invites || invites.length === 0) return;
+
+  for (const invite of invites) {
+    const { error: insertError } = await supabase.from("organization_members").insert({
+      organization_id: invite.organization_id,
+      user_id: userId,
+      role: invite.role,
+    });
+
+    // 23505 = unique_violation: already a member of this org (e.g. a
+    // stale invite left over after joining some other way). Still worth
+    // marking accepted so it stops showing as pending; any other insert
+    // error leaves the invite untouched to retry on the next load.
+    if (insertError && insertError.code !== "23505") continue;
+
+    await supabase
+      .from("organization_invites")
+      .update({ accepted_at: new Date().toISOString() })
+      .eq("id", invite.id);
+  }
 }
 
 export async function getComedianProfileForUser(userId: string) {

@@ -73,7 +73,18 @@ function LoginForm() {
       return;
     }
 
-    window.location.href = "/dashboard";
+    // A brand-new admin/staff invite has no comedian_profiles row to land
+    // on at /dashboard — send them straight to /admin instead, where
+    // claimPendingOrgInvites() picks up the invite and completes it.
+    const { data: pendingInvite } = await supabase
+      .from("organization_invites")
+      .select("id")
+      .is("accepted_at", null)
+      .eq("email", email.toLowerCase())
+      .limit(1)
+      .maybeSingle();
+
+    window.location.href = pendingInvite ? "/admin" : "/dashboard";
   }
 
   async function handleResend() {

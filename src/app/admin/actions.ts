@@ -4,6 +4,8 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { slugify } from "@/lib/slug";
+import { notifyOrgInvite } from "@/lib/email/notify-org-invite";
+import type { OrgRole } from "@/lib/database.types";
 
 /**
  * All admin mutations below use the RLS-respecting server client (not the
@@ -103,4 +105,57 @@ export async function createShow(formData: FormData) {
 
   revalidatePath("/admin/shows");
   redirect(`/admin/shows?org=${organizationId}`);
+}
+
+export async function inviteTeammate(formData: FormData) {
+  const organizationId = String(formData.get("organizationId") ?? "");
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const role = String(formData.get("role") ?? "") as OrgRole;
+
+  if (!organizationId || !email || (role !== "admin" && role !== "staff")) {
+    redirect(
+      `/admin/team?org=${organizationId}&error=${encodeURIComponent("Email and role are required.")}`,
+    );
+  }
+
+  const supabase = await createClient();
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData.user) redirect("/login");
+
+  const { data: organization } = await supabase
+    .from("organizations")
+    .select("name")
+    .eq("id", organizationId)
+    .maybeSingle();
+
+  const { error: inviteError } = await supabase.from("organization_invites").insert({
+    organization_id: organizationId,
+    email,
+    role,
+    invited_by: userData.user!.id,
+  });
+
+  if (inviteError) {
+    const message =
+      inviteError.code === "23505"
+        ? "There's already a pending invite for this email."
+        : "Could not create the invite.";
+    redirect(`/admin/team?org=${organizationId}&error=${encodeURIComponent(message)}`);
+  }
+
+  await notifyOrgInvite({ email, organizationName: organization?.name ?? "TheCrib", role });
+
+  revalidatePath("/admin/team");
+  redirect(`/admin/team?org=${organizationId}`);
+}
+
+export async function revokeInvite(formData: FormData) {
+  const inviteId = String(formData.get("inviteId") ?? "");
+  const organizationId = String(formData.get("organizationId") ?? "");
+
+  const supabase = await createClient();
+  await supabase.from("organization_invites").delete().eq("id", inviteId);
+
+  revalidatePath("/admin/team");
+  redirect(`/admin/team?org=${organizationId}`);
 }
